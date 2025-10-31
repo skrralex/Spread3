@@ -1,30 +1,42 @@
-const cols = 25;
-const rows = 15;
+let hexSize;
+let hexCols, hexRows;
 let grid = [];
-let cellSize;
 let running = false;
-let infectedCount = 0;
-let healthyCount = 0;
-let button;
+let speedSlider, runButton;
+let lastUpdate = 0;
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
-  cellSize = min(width / cols, height / rows);
-  initGrid();
+  textFont("sans-serif");
 
-  button = createButton('Run Simulation');
-  button.position(20, 20);
-  button.mousePressed(startSimulation);
+  speedSlider = createSlider(1, 60, 10, 1); // steps per second
+  speedSlider.position(20, 20);
+  speedSlider.style("width", "200px");
+
+  runButton = createButton("Run Simulation");
+  runButton.position(240, 20);
+  runButton.mousePressed(startSimulation);
+
+  initGrid();
 }
 
 function initGrid() {
   grid = [];
-  for (let y = 0; y < rows; y++) {
+  let spacing = 28; // pixel distance between centers
+  hexSize = spacing / 1.15;
+
+  hexCols = int(width / spacing);
+  hexRows = int(height / (spacing * 0.87));
+
+  for (let y = 0; y < hexRows; y++) {
     let row = [];
-    for (let x = 0; x < cols; x++) {
-      row.push({ 
-        state: 'healthy', // healthy, vaccinated, infected
-        nextState: 'healthy' 
+    for (let x = 0; x < hexCols; x++) {
+      let xOffset = (y % 2) * (spacing / 2);
+      row.push({
+        x: x * spacing + xOffset + spacing / 2,
+        y: y * spacing * 0.87 + spacing,
+        state: "healthy",
+        next: "healthy"
       });
     }
     grid.push(row);
@@ -32,88 +44,105 @@ function initGrid() {
 }
 
 function startSimulation() {
-  // Reset infection
-  for (let r of grid) for (let c of r) if (c.state === 'infected') c.state = 'healthy';
-  let randomCell = grid[int(random(rows))][int(random(cols))];
-  randomCell.state = 'infected';
+  // clear infections
+  for (let row of grid) for (let c of row) if (c.state === "infected") c.state = "healthy";
+  let ry = int(random(hexRows));
+  let rx = int(random(hexCols));
+  grid[ry][rx].state = "infected";
   running = true;
 }
 
 function draw() {
-  background(10);
+  background(15);
 
+  // label
+  fill(255);
+  noStroke();
+  textSize(14);
+  text(`Speed: ${speedSlider.value()} steps/sec`, 20, 50);
+
+  let now = millis();
+  if (running && now - lastUpdate > 1000 / speedSlider.value()) {
+    stepSimulation();
+    lastUpdate = now;
+  }
+
+  // draw hexes
+  for (let y = 0; y < hexRows; y++) {
+    for (let x = 0; x < hexCols; x++) {
+      drawHex(grid[y][x]);
+    }
+  }
+}
+
+function drawHex(cell) {
+  let c;
+  if (cell.state === "vaccinated") c = color(100, 200, 255);
+  else if (cell.state === "infected") c = color(255, 80, 80);
+  else c = color(220);
+  stroke(40);
+  fill(c);
+  hex(cell.x, cell.y, hexSize);
+}
+
+function stepSimulation() {
   let infectionSpread = false;
-
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
+  for (let y = 0; y < hexRows; y++) {
+    for (let x = 0; x < hexCols; x++) {
       let cell = grid[y][x];
-
-      // Draw cell
-      if (cell.state === 'vaccinated') fill(100, 200, 255);
-      else if (cell.state === 'infected') fill(255, 80, 80);
-      else fill(220);
-      stroke(40);
-      rect(x * cellSize, y * cellSize, cellSize - 1, cellSize - 1);
-
-      if (running && cell.state === 'infected') {
-        // Try infecting neighbors
-        for (let ny = -1; ny <= 1; ny++) {
-          for (let nx = -1; nx <= 1; nx++) {
-            if (abs(nx) + abs(ny) !== 1) continue; // only cardinal directions
-            let yy = y + ny;
-            let xx = x + nx;
-            if (yy >= 0 && yy < rows && xx >= 0 && xx < cols) {
-              let neighbor = grid[yy][xx];
-              if (neighbor.state === 'healthy') {
-                if (random() < 0.25) {
-                  neighbor.nextState = 'infected';
-                  infectionSpread = true;
-                }
-              }
-            }
+      cell.next = cell.state;
+      if (cell.state === "infected") {
+        for (let n of getNeighbors(x, y)) {
+          if (n.state === "healthy" && random() < 0.25) {
+            n.next = "infected";
+            infectionSpread = true;
           }
         }
       }
     }
   }
+  // update
+  for (let y = 0; y < hexRows; y++)
+    for (let x = 0; x < hexCols; x++) grid[y][x].state = grid[y][x].next;
 
-  // Update grid
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      let c = grid[y][x];
-      c.state = c.nextState;
-      c.nextState = c.state;
-    }
+  if (!infectionSpread) running = false;
+}
+
+function getNeighbors(x, y) {
+  let dirsEven = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1]];
+  let dirsOdd  = [[-1,0],[1,0],[0,-1],[0,1],[-1,1],[1,1]];
+  let dirs = (y % 2 === 0) ? dirsEven : dirsOdd;
+  let list = [];
+  for (let [dx,dy] of dirs) {
+    let nx = x + dx, ny = y + dy;
+    if (ny>=0 && ny<hexRows && nx>=0 && nx<hexCols) list.push(grid[ny][nx]);
   }
-
-  // Count states
-  infectedCount = grid.flat().filter(c => c.state === 'infected').length;
-  healthyCount = grid.flat().filter(c => c.state === 'healthy').length;
-
-  // Display stats
-  fill(255);
-  noStroke();
-  textSize(16);
-  textAlign(LEFT, TOP);
-  text(`Infected: ${infectedCount}`, 20, 60);
-  text(`Healthy: ${healthyCount}`, 20, 80);
-
-  // Stop when no new infections
-  if (running && !infectionSpread) running = false;
+  return list;
 }
 
 function mousePressed() {
-  if (mouseY < 100) return; // ignore GUI area
-  let x = floor(mouseX / cellSize);
-  let y = floor(mouseY / cellSize);
-  if (x >= 0 && x < cols && y >= 0 && y < rows) {
-    let cell = grid[y][x];
-    if (cell.state === 'healthy') cell.state = 'vaccinated';
-    else if (cell.state === 'vaccinated') cell.state = 'healthy';
+  if (mouseY < 70) return;
+  let spacing = 28;
+  for (let y = 0; y < hexRows; y++) {
+    for (let x = 0; x < hexCols; x++) {
+      let c = grid[y][x];
+      if (dist(mouseX, mouseY, c.x, c.y) < hexSize) {
+        c.state = (c.state === "vaccinated") ? "healthy" : "vaccinated";
+        return;
+      }
+    }
   }
+}
+
+function hex(x, y, r) {
+  beginShape();
+  for (let a = 0; a < TWO_PI; a += PI / 3) {
+    vertex(x + cos(a) * r, y + sin(a) * r);
+  }
+  endShape(CLOSE);
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-  cellSize = min(width / cols, height / rows);
+  initGrid();
 }
